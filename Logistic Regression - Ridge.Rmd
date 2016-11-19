@@ -1,0 +1,149 @@
+#Logistic Regression - Ridge Regression
+
+$$\mathcal{G}=\{1,2\}$$
+
+$$y_i = I(g_i=1)$$
+
+$$\mbox{Pr}(G=2|X=x)+\frac{e^{\beta_0+\beta^Tx}}{1+e^{\beta_0+\beta^Tx}}$$
+
+$$\log\frac{\mbox{Pr}(G=2|X=x)}{\mbox{Pr}(G=1|X=x)}=\beta_0+\beta^Tx$$
+
+$$\min_{(\beta_0, \beta) \in \mathbb{R}^{p+1}} -\left[\frac{1}{N} \sum_{i=1}^N y_i \cdot (\beta_0 + x_i^T \beta) - \log (1+e^{(\beta_0+x_i^T \beta)})\right] + \lambda \big[ (1-\alpha)||\beta||_2^2/2 + \alpha||\beta||_1\big].$$
+
+Link To Data Used: https://archive.ics.uci.edu/ml/datasets/Bank+Marketing
+
+Data Provided By:
+
+[Moro et al., 2014] S. Moro, P. Cortez and P. Rita. A Data-Driven Approach to Predict the Success of Bank Telemarketing. Decision Support Systems, Elsevier, 62:22-31, June 2014
+
+Primary Coding Reference: 
+
+Trevor Hastie and Junyang Qian. (2014)
+Glmnet Vignette
+https://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html#log
+
+```{r}
+datafile <- read.csv(file="C:/Users/andrew/Desktop/bank-full.csv",head=TRUE,sep=";")
+dim(datafile)
+head(datafile)
+colnames(datafile)[colnames(datafile)=="y"] <- "dep_var"
+head(datafile)
+#summary(datafile$age)
+#summary(datafile$job)
+#job <- as.factor(datafile$job)
+#summary(datafile$job)
+#summary(datafile$pdays)
+#dim(datafile)
+```
+
+```{r}
+library(glmnet)
+```
+
+#Begin the Train-Test Split
+
+1. Select 80% of the number of rows for the Training Set, 20% for the Test Set.  Because 80% is not guaranteed to be an integer, include the `floor` command for rounding.  
+2. For reproducible results, set the sampling seed to any number.
+3. Create the `Training` set as a random sample of ~80% of the data file.
+4. View the new datafile.  Specifically, the training indexed subset of the data file.
+5. View the Dimensions of the Training Set.
+```{r}
+ntrain <- floor((4/5)*nrow(datafile)) #1
+set.seed(1) #2
+train_ind=sample(seq(nrow(datafile)),ntrain,replace=FALSE) #3
+head(datafile[train_ind,]) #4
+dim(datafile[train_ind,]) #5
+```
+
+#Build the Training Dataset
+
+1. From the datafile, indexed as `train`, omit/remove the rows with missing elements.
+2. Create an `X matrix` of explanatory variables.  This will be all variables from the training dataset except for the dependent variable.
+3. View the `X marix`
+4. Create a `y vector` of dependent variables.  This will be only the dependen variable from the training dataset.
+5. View the `y vector`
+```{r}
+datafile[train_ind,] = na.omit(datafile[train_ind,]) #1
+x=model.matrix(dep_var~.-1,data=datafile[train_ind,]) #2
+head(x) #3
+y=datafile[train_ind,]$dep_var #4
+head(y) #5
+```
+
+```{r}
+fit.ridge=glmnet(x,y,family="binomial",alpha=0)
+plot(fit.ridge,xvar="lambda",label=TRUE)
+```
+
+###Plotting the Fraction of Deviance Explained
+```{r}
+plot(fit.ridge,xvar="dev",label=TRUE)
+```
+
+###k-Fold Cross-Validation (10-Fold)
+```{r}
+set.seed(1)
+cv.ridge=cv.glmnet(x,y,family="binomial",type.measure="class",alpha=0)
+plot(cv.ridge)
+```
+
+###AUC: Area Under the Curve (AUROC: Area Under the Receiver Operating Characteristic Curve)
+```{r}
+set.seed(1)
+cvfit.ridge=cv.glmnet(x,y,family="binomial",type.measure="auc",alpha=0)
+plot(cvfit.ridge)
+```
+
+###Extract the $\lambda$ estimate that minimizes the rate of misclassification.
+```{r}
+cv.ridge$lambda.min
+```
+###Extract the $\lambda$ estimate that is within one standard deviation from the the minimum misclassification rate.
+```{r}
+cv.ridge$lambda.1se
+```
+
+###Fit the the final Logistic Regression Model (Ridge)
+
+Fit the logistic regression model tuned via Ridge regression.  Use `alpha=0` and us the `lambda` that provided the minimum misclassification.  Make sure to set the family to `binomial`.  
+
+Once the model is fit, extract the coefficients to view the best model coefficients.
+```{r}
+fit.ridge.min=glmnet(x,y,alpha=0,lambda=cv.ridge$lambda.min,family="binomial") 
+coef(fit.ridge.min) #Should include Logit Model Here
+```
+
+###Build The Test Dataset
+
+1. Create the Test file, which is a subset of rows from the entire data file.  We already identified the training index.  Think of this section as the part that is `not` the training set, hence the `-` sign.
+
+2. Omit/remove the rows with `na` elements (remove rows where data is not available).
+
+3. Create an `X matrix` of explanatory variables from the `Test` data set.  Do this by selecting `all data` from `test`, which is the set we created, with the exception of the dependent variable.
+
+4. Create a `y vector` from the `test` set.
+```{r}
+test=datafile[-train_ind,] #1
+test=na.omit(test) #2
+
+testx=model.matrix(dep_var~.-1,data=test) #3
+testy=test$dep_var #4
+```
+
+###Predictions on Test Data
+
+For this step, we supply the cross-validated ridge model.  We apply this model to the new data, i.e. the Test set.  From the cross-validated model from earlier, we obtained multiple values of the tuning parameter, lambda.  We will set s to `lambda.min` which was the lamda that provided the lowest misclassification rate in the cross-validation stage. Addiionally, our goal is to predict the `class` outcome, since the dependent variable is dichotomous.  
+```{r}
+ridge.pred = predict(cv.ridge, newx = testx, s = "lambda.min", type = "class")
+```
+
+###Confusion Matrix
+```{r}
+table(ridge.pred,testy)
+```
+
+###Accuracy on Test Dataset
+```{r}
+mean(ridge.pred==testy)
+```
+
